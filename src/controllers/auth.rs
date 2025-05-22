@@ -18,12 +18,6 @@ use time;
 
 pub static EMAIL_DOMAIN_RE: OnceLock<Regex> = OnceLock::new();
 
-fn get_allow_email_domain_re() -> &'static Regex {
-    EMAIL_DOMAIN_RE.get_or_init(|| {
-        Regex::new(r"@example\.com$|@gmail\.com$").expect("Failed to compile regex")
-    })
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ForgotParams {
     pub email: String,
@@ -88,15 +82,12 @@ async fn verify(State(ctx): State<AppContext>, Path(token): Path<String>) -> Res
 
     let user = users::Model::find_by_verification_token(&ctx.db, &token).await?;
 
-    if user.email_verified_at.is_some() {
-        tracing::info!(pid = user.pid.to_string(), "user already verified");
-    } else {
-        let active_model = user.into_active_model();
-        let user = active_model.verified(&ctx.db).await?;
+    if user.email_verified_at.is_none() {
+        let user = user.into_active_model().verified(&ctx.db).await?;
         tracing::info!(pid = user.pid.to_string(), "user verified");
     }
 
-    format::json(())
+    format::redirect(format!("https://{}/auth/verification-complete", settings.frontend).as_str())
 }
 
 /// In case the user forgot his password  this endpoints generate a forgot token
@@ -108,37 +99,27 @@ async fn forgot(
     State(ctx): State<AppContext>,
     Json(params): Json<ForgotParams>,
 ) -> Result<Response> {
-    let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
-        return format::json(());
-    };
-
-    let user = user
+    let user = users::Model::find_by_email(&ctx.db, &params.email)
+        .await?
         .into_active_model()
         .set_forgot_password_sent(&ctx.db)
         .await?;
 
     AuthMailer::forgot_password(&ctx, &user).await?;
 
-    format::json(())
+    format::empty()
 }
 
 /// reset user password by the given parameters
 #[debug_handler]
 async fn reset(State(ctx): State<AppContext>, Json(params): Json<ResetParams>) -> Result<Response> {
-    let Ok(user) = users::Model::find_by_reset_token(&ctx.db, &params.token).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
-        tracing::info!("reset token not found");
+    let user = users::Model::find_by_reset_token(&ctx.db, &params.token).await?;
 
-        return format::json(());
-    };
     user.into_active_model()
         .reset_password(&ctx.db, &params.password)
         .await?;
 
-    format::json(())
+    format::empty()
 }
 
 /// Creates a user login and returns a token
@@ -152,10 +133,19 @@ async fn login(
 
     let user = users::Model::find_by_email(&ctx.db, &params.email).await?;
 
-    let valid = user.verify_password(&params.password);
-
-    if !valid {
+    if !user.verify_password(&params.password) {
         return unauthorized("unauthorized!");
+    }
+
+    if user.email_verified_at.is_none() {
+        return Err(CustomError(
+            StatusCode::FORBIDDEN,
+            ErrorDetail {
+                error: Some("email_not_verified".to_string()),
+                description: Some("User email is not verified".to_string()),
+                errors: None,
+            },
+        ));
     }
 
     let jwt_secret = ctx.config.get_jwt_config()?;
@@ -184,47 +174,23 @@ async fn current(auth: auth::JWT, State(ctx): State<AppContext>) -> Result<Respo
     format::json(CurrentResponse::new(&user))
 }
 
-/// Magic link authentication provides a secure and passwordless way to log in to the application.
-///
-/// # Flow
-/// 1. **Request a Magic Link**:
-///    A registered user sends a POST request to `/magic-link` with their email.
-///    If the email exists, a short-lived, one-time-use token is generated and sent to the user's email.
-///    For security and to avoid exposing whether an email exists, the response always returns 200, even if the email is invalid.
-///
-/// 2. **Click the Magic Link**:
-///    The user clicks the link (/magic-link/{token}), which validates the token and its expiration.
-///    If valid, the server generates a JWT and responds with a [`LoginResponse`].
-///    If invalid or expired, an unauthorized response is returned.
-///
-/// This flow enhances security by avoiding traditional passwords and providing a seamless login experience.
+#[debug_handler]
 async fn magic_link(
     State(ctx): State<AppContext>,
     Json(params): Json<MagicLinkParams>,
 ) -> Result<Response> {
-    let email_regex = get_allow_email_domain_re();
-    if !email_regex.is_match(&params.email) {
-        tracing::debug!(
-            email = params.email,
-            "The provided email is invalid or does not match the allowed domains"
-        );
-        return bad_request("invalid request");
-    }
+    let user = users::Model::find_by_email(&ctx.db, &params.email)
+        .await?
+        .into_active_model()
+        .create_magic_link(&ctx.db)
+        .await?;
 
-    let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
-        tracing::debug!(email = params.email, "user not found by email");
-        return format::empty_json();
-    };
-
-    let user = user.into_active_model().create_magic_link(&ctx.db).await?;
     AuthMailer::send_magic_link(&ctx, &user).await?;
 
-    format::empty_json()
+    format::empty()
 }
 
-/// Verifies a magic link token and authenticates the user.
+#[debug_handler]
 async fn magic_link_verify(
     Path(token): Path<String>,
     cookies: Cookies,
@@ -232,13 +198,11 @@ async fn magic_link_verify(
 ) -> Result<Response> {
     let settings = &Settings::from_opt_json(&ctx.config.settings)?;
 
-    let Ok(user) = users::Model::find_by_magic_token(&ctx.db, &token).await else {
-        // we don't want to expose our users email. if the email is invalid we still
-        // returning success to the caller
-        return unauthorized("unauthorized!");
-    };
-
-    let user = user.into_active_model().clear_magic_link(&ctx.db).await?;
+    let user = users::Model::find_by_magic_token(&ctx.db, &token)
+        .await?
+        .into_active_model()
+        .clear_magic_link(&ctx.db)
+        .await?;
 
     let jwt_secret = ctx.config.get_jwt_config()?;
 
@@ -257,7 +221,7 @@ async fn magic_link_verify(
 
     cookies.add(cookie);
 
-    format::redirect(format!("{}/auth/login", settings.frontend).as_str())
+    format::redirect(format!("https://{}/auth/login", settings.frontend).as_str())
 }
 
 #[debug_handler]

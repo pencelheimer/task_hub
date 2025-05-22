@@ -4,7 +4,7 @@
 use loco_rs::prelude::*;
 use serde_json::json;
 
-use crate::models::users;
+use crate::{common::settings::Settings, models::users};
 
 static welcome: Dir<'_> = include_dir!("src/mailers/auth/welcome");
 static forgot: Dir<'_> = include_dir!("src/mailers/auth/forgot");
@@ -22,6 +22,8 @@ impl AuthMailer {
     ///
     /// When email sending is failed
     pub async fn send_welcome(ctx: &AppContext, user: &users::Model) -> Result<()> {
+        let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
         Self::mail_template(
             ctx,
             &welcome,
@@ -30,7 +32,7 @@ impl AuthMailer {
                 locals: json!({
                   "name": user.name,
                   "verifyToken": user.email_verification_token,
-                  "domain": ctx.config.server.full_url()
+                  "backend": settings.backend
                 }),
                 ..Default::default()
             },
@@ -46,15 +48,17 @@ impl AuthMailer {
     ///
     /// When email sending is failed
     pub async fn forgot_password(ctx: &AppContext, user: &users::Model) -> Result<()> {
+        let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
         Self::mail_template(
             ctx,
             &forgot,
             mailer::Args {
                 to: user.email.to_string(),
                 locals: json!({
-                  "name": user.name,
-                  "resetToken": user.reset_token,
-                  "domain": ctx.config.server.full_url()
+                    "name": user.name,
+                    "frontend": settings.frontend,
+                    "token": user.reset_token,
                 }),
                 ..Default::default()
             },
@@ -80,7 +84,7 @@ impl AuthMailer {
                   "token": user.magic_link_token.clone().ok_or_else(|| Error::string(
                             "the user model not contains magic link token",
                     ))?,
-                  "host": ctx.config.server.full_url()
+                  "host": ctx.config.server.host
                 }),
                 ..Default::default()
             },
