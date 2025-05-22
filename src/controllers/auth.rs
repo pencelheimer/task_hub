@@ -1,16 +1,20 @@
 use crate::{
+    common::settings::Settings,
     mailers::auth::AuthMailer,
     models::{
         _entities::users,
         users::{LoginParams, RegisterParams},
     },
-    views::auth::{CurrentResponse, LoginResponse},
+    views::auth::{CurrentResponse, DeleteAllResponse, LoginResponse},
 };
-use axum::debug_handler;
-use loco_rs::prelude::*;
+use axum::{debug_handler, http::status::StatusCode};
+use loco_rs::{controller::ErrorDetail, prelude::*, Error::CustomError};
+use tower_cookies::{cookie::SameSite, Cookie, CookieManagerLayer, Cookies};
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use time;
 
 pub static EMAIL_DOMAIN_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -48,12 +52,21 @@ async fn register(
     let user = match res {
         Ok(user) => user,
         Err(err) => {
+            let message = err.to_string();
             tracing::info!(
-                message = err.to_string(),
+                message = &message,
                 user_email = &params.email,
                 "could not register user",
             );
-            return format::json(());
+
+            return Err(CustomError(
+                StatusCode::CONFLICT,
+                ErrorDetail {
+                    error: Some("Conflict".to_string()),
+                    description: Some(message),
+                    errors: None,
+                },
+            ));
         }
     };
 
@@ -64,13 +77,15 @@ async fn register(
 
     AuthMailer::send_welcome(&ctx, &user).await?;
 
-    format::json(())
+    format::empty()
 }
 
 /// Verify register user. if the user not verified his email, he can't login to
 /// the system.
 #[debug_handler]
 async fn verify(State(ctx): State<AppContext>, Path(token): Path<String>) -> Result<Response> {
+    let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
     let user = users::Model::find_by_verification_token(&ctx.db, &token).await?;
 
     if user.email_verified_at.is_some() {
@@ -128,7 +143,13 @@ async fn reset(State(ctx): State<AppContext>, Json(params): Json<ResetParams>) -
 
 /// Creates a user login and returns a token
 #[debug_handler]
-async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -> Result<Response> {
+async fn login(
+    State(ctx): State<AppContext>,
+    cookies: Cookies,
+    Json(params): Json<LoginParams>,
+) -> Result<Response> {
+    let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
     let user = users::Model::find_by_email(&ctx.db, &params.email).await?;
 
     let valid = user.verify_password(&params.password);
@@ -143,7 +164,18 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
         .generate_jwt(&jwt_secret.secret, jwt_secret.expiration)
         .or_else(|_| unauthorized("unauthorized!"))?;
 
-    format::json(LoginResponse::new(&user, &token))
+    let cookie = Cookie::build(("auth_token", token.clone()))
+        .path("/")
+        .domain(settings.backend.to_owned())
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::None)
+        .max_age(time::Duration::seconds(jwt_secret.expiration as i64))
+        .build();
+
+    cookies.add(cookie);
+
+    format::json(LoginResponse::new(&user))
 }
 
 #[debug_handler]
@@ -195,8 +227,11 @@ async fn magic_link(
 /// Verifies a magic link token and authenticates the user.
 async fn magic_link_verify(
     Path(token): Path<String>,
+    cookies: Cookies,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
+    let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
     let Ok(user) = users::Model::find_by_magic_token(&ctx.db, &token).await else {
         // we don't want to expose our users email. if the email is invalid we still
         // returning success to the caller
@@ -211,9 +246,53 @@ async fn magic_link_verify(
         .generate_jwt(&jwt_secret.secret, jwt_secret.expiration)
         .or_else(|_| unauthorized("unauthorized!"))?;
 
-    format::json(LoginResponse::new(&user, &token))
+    let cookie = Cookie::build(("auth_token", token.clone()))
+        .path("/")
+        .domain(settings.backend.to_owned())
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::None)
+        .max_age(time::Duration::seconds(jwt_secret.expiration as i64))
+        .build();
+
+    cookies.add(cookie);
+
+    format::redirect(format!("{}/auth/login", settings.frontend).as_str())
 }
 
+#[debug_handler]
+async fn logout(
+    auth: auth::JWT,
+    cookies: Cookies,
+    State(ctx): State<AppContext>,
+) -> Result<Response> {
+    let settings = &Settings::from_opt_json(&ctx.config.settings)?;
+
+    let _ = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
+
+    let cookie = Cookie::build(("auth_token", ""))
+        .path("/")
+        .domain(settings.backend.to_owned())
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::None)
+        .max_age(time::Duration::seconds(0))
+        .build();
+
+    cookies.remove(cookie);
+
+    format::empty_json()
+}
+
+#[debug_handler]
+async fn delete(auth: auth::JWT, State(ctx): State<AppContext>) -> Result<Response> {
+    users::Model::find_by_pid(&ctx.db, &auth.claims.pid)
+        .await?
+        .delete(&ctx.db)
+        .await?;
+
+    format::empty()
+}
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api/auth")
@@ -225,4 +304,7 @@ pub fn routes() -> Routes {
         .add("/current", get(current))
         .add("/magic-link", post(magic_link))
         .add("/magic-link/{token}", get(magic_link_verify))
+        .add("/logout", post(logout))
+        .add("/delete", post(delete))
+        .layer(CookieManagerLayer::new())
 }
