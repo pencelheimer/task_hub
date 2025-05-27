@@ -153,7 +153,7 @@ async fn can_verification_token() {
 
     let result = user
         .into_active_model()
-        .set_email_verification_sent(&boot.app_context.db)
+        .set_email_verification_token(&boot.app_context.db)
         .await;
 
     assert!(result.is_ok(), "Failed to set email verification sent");

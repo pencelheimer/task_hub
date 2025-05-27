@@ -1,0 +1,10 @@
+---
+- id: 0
+  name: "User"
+  created_at: "2025-5-27T12:34:56.789Z"
+  updated_at: "2025-5-27T12:34:56.789Z"
+- id: 1
+  name: "Admin"
+  created_at: "2025-5-27T12:34:56.789Z"
+  updated_at: "2025-5-27T12:34:56.789Z"
+

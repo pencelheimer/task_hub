@@ -1,11 +1,15 @@
 use async_trait::async_trait;
 use chrono::{offset::Local, Duration};
 use loco_rs::{auth::jwt, hash, prelude::*};
+use sea_orm::{QuerySelect, QueryTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use uuid::Uuid;
 
-pub use super::_entities::users::{self, ActiveModel, Entity, Model};
+pub use super::_entities::{
+    roles::{self},
+    users::{self, ActiveModel, Model},
+};
 
 pub const MAGIC_LINK_LENGTH: i8 = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
@@ -59,7 +63,7 @@ impl ActiveModelBehavior for super::_entities::users::ActiveModel {
 }
 
 #[async_trait]
-impl Authenticable for Model {
+impl Authenticable for users::Model {
     async fn find_by_api_key(db: &DatabaseConnection, api_key: &str) -> ModelResult<Self> {
         let user = users::Entity::find()
             .filter(
@@ -77,7 +81,7 @@ impl Authenticable for Model {
     }
 }
 
-impl Model {
+impl users::Model {
     /// finds a user by the provided email
     ///
     /// # Errors
@@ -93,6 +97,34 @@ impl Model {
             .one(db)
             .await?;
         user.ok_or_else(|| ModelError::EntityNotFound)
+    }
+
+    /// finds a user and their role by the provided email
+    ///
+    /// # Errors
+    ///
+    /// When could not find user by the given token or DB query error
+    pub async fn find_by_email_with_role(
+        db: &DatabaseConnection,
+        email: &str,
+    ) -> ModelResult<(Self, roles::Model)> {
+        let (user, role) = users::Entity::find()
+            .find_also_related(roles::Entity)
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Email, email)
+                    .build(),
+            )
+            .one(db)
+            .await?
+            .ok_or_else(|| ModelError::EntityNotFound)?;
+
+        let role = match role {
+            Some(role) => role,
+            None => return Err(ModelError::EntityNotFound),
+        };
+
+        Ok((user, role))
     }
 
     /// finds a user by the provided verification token
@@ -172,7 +204,7 @@ impl Model {
     ///
     /// # Errors
     ///
-    /// When could not find user  or DB query error
+    /// When could not find user or DB query error
     pub async fn find_by_pid(db: &DatabaseConnection, pid: &str) -> ModelResult<Self> {
         let parse_uuid = Uuid::parse_str(pid).map_err(|e| ModelError::Any(e.into()))?;
         let user = users::Entity::find()
@@ -184,6 +216,36 @@ impl Model {
             .one(db)
             .await?;
         user.ok_or_else(|| ModelError::EntityNotFound)
+    }
+
+    /// finds a user and their role by the provided pid
+    ///
+    /// # Errors
+    ///
+    /// When could not find user  or DB query error
+    pub async fn find_by_pid_with_role(
+        db: &DatabaseConnection,
+        pid: &str,
+    ) -> ModelResult<(Self, roles::Model)> {
+        let parse_uuid = Uuid::parse_str(pid).map_err(|e| ModelError::Any(e.into()))?;
+
+        let (user, role) = users::Entity::find()
+            .find_also_related(roles::Entity)
+            .filter(
+                model::query::condition()
+                    .eq(users::Column::Pid, parse_uuid)
+                    .build(),
+            )
+            .one(db)
+            .await?
+            .ok_or_else(|| ModelError::EntityNotFound)?;
+
+        let role = match role {
+            Some(role) => role,
+            None => return Err(ModelError::EntityNotFound),
+        };
+
+        Ok((user, role))
     }
 
     /// finds a user by the provided api key
@@ -240,10 +302,29 @@ impl Model {
 
         let password_hash =
             hash::hash_password(&params.password).map_err(|e| ModelError::Any(e.into()))?;
+
+        let Some(role_id) = roles::Entity::find()
+            .filter(
+                model::query::condition()
+                    .eq(roles::Column::Name, "User")
+                    .build(),
+            )
+            .select_only()
+            .column(roles::Column::Id)
+            .into_tuple()
+            .one(&txn)
+            .await?
+        else {
+            return Err(ModelError::Message(String::from(
+                "Default User role is not present in the DB",
+            )));
+        };
+
         let user = users::ActiveModel {
             email: ActiveValue::set(params.email.to_string()),
             password: ActiveValue::set(password_hash),
             name: ActiveValue::set(params.name.to_string()),
+            role_id: ActiveValue::set(role_id),
             ..Default::default()
         }
         .insert(&txn)
@@ -274,10 +355,10 @@ impl ActiveModel {
     /// # Errors
     ///
     /// when has DB query error
-    pub async fn set_email_verification_sent(
+    pub async fn set_email_verification_token(
         mut self,
         db: &DatabaseConnection,
-    ) -> ModelResult<Model> {
+    ) -> ModelResult<users::Model> {
         self.email_verification_sent_at = ActiveValue::set(Some(Local::now().into()));
         self.email_verification_token = ActiveValue::Set(Some(Uuid::new_v4().to_string()));
         Ok(self.update(db).await?)
@@ -295,7 +376,10 @@ impl ActiveModel {
     /// # Errors
     ///
     /// when has DB query error
-    pub async fn set_forgot_password_sent(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
+    pub async fn set_forgot_password_sent(
+        mut self,
+        db: &DatabaseConnection,
+    ) -> ModelResult<users::Model> {
         self.reset_sent_at = ActiveValue::set(Some(Local::now().into()));
         self.reset_token = ActiveValue::Set(Some(Uuid::new_v4().to_string()));
         Ok(self.update(db).await?)
@@ -310,7 +394,7 @@ impl ActiveModel {
     /// # Errors
     ///
     /// when has DB query error
-    pub async fn verified(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
+    pub async fn verified(mut self, db: &DatabaseConnection) -> ModelResult<users::Model> {
         self.email_verified_at = ActiveValue::set(Some(Local::now().into()));
         Ok(self.update(db).await?)
     }
@@ -328,7 +412,7 @@ impl ActiveModel {
         mut self,
         db: &DatabaseConnection,
         password: &str,
-    ) -> ModelResult<Model> {
+    ) -> ModelResult<users::Model> {
         self.password =
             ActiveValue::set(hash::hash_password(password).map_err(|e| ModelError::Any(e.into()))?);
         self.reset_token = ActiveValue::Set(None);
@@ -343,7 +427,7 @@ impl ActiveModel {
     ///
     /// # Errors
     /// - Returns an error if database update fails
-    pub async fn create_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
+    pub async fn create_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<users::Model> {
         let random_str = hash::random_string(MAGIC_LINK_LENGTH as usize);
         let expired = Local::now() + Duration::minutes(MAGIC_LINK_EXPIRATION_MIN.into());
 
@@ -359,7 +443,7 @@ impl ActiveModel {
     ///
     /// # Errors
     /// - Returns an error if database update fails
-    pub async fn clear_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<Model> {
+    pub async fn clear_magic_link(mut self, db: &DatabaseConnection) -> ModelResult<users::Model> {
         self.magic_link_token = ActiveValue::set(None);
         self.magic_link_expiration = ActiveValue::set(None);
         Ok(self.update(db).await?)

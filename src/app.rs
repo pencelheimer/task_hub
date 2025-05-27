@@ -13,6 +13,7 @@ use loco_rs::{
 use migration::Migrator;
 use std::path::Path;
 
+use crate::models::roles;
 #[allow(unused_imports)]
 use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
 
@@ -63,8 +64,12 @@ impl Hooks for App {
         Ok(())
     }
     async fn seed(ctx: &AppContext, base: &Path) -> Result<()> {
+        db::seed::<roles::ActiveModel>(&ctx.db, &base.join("roles.yaml").display().to_string())
+            .await?;
+
         db::seed::<users::ActiveModel>(&ctx.db, &base.join("users.yaml").display().to_string())
             .await?;
+
         Ok(())
     }
 }

@@ -1,11 +1,11 @@
 use crate::{
-    common::settings::Settings,
+    common::{self, responses, settings::Settings},
     mailers::auth::AuthMailer,
     models::{
         _entities::users,
         users::{LoginParams, RegisterParams},
     },
-    views::auth::{CurrentResponse, DeleteAllResponse, LoginResponse},
+    views::auth::{CurrentResponse, LoginResponse},
 };
 use axum::{debug_handler, http::status::StatusCode};
 use loco_rs::{controller::ErrorDetail, prelude::*, Error::CustomError};
@@ -40,33 +40,30 @@ pub struct MagicLinkParams {
 async fn register(
     State(ctx): State<AppContext>,
     Json(params): Json<RegisterParams>,
-) -> Result<Response> {
+) -> Result<impl IntoResponse> {
     let res = users::Model::create_with_password(&ctx.db, &params).await;
 
     let user = match res {
         Ok(user) => user,
         Err(err) => {
-            let message = err.to_string();
-            tracing::info!(
-                message = &message,
+            let msg = err.to_string();
+
+            tracing::warn!(
+                message = &msg,
                 user_email = &params.email,
                 "could not register user",
             );
 
-            return Err(CustomError(
-                StatusCode::CONFLICT,
-                ErrorDetail {
-                    error: Some("Conflict".to_string()),
-                    description: Some(message),
-                    errors: None,
-                },
-            ));
+            match err {
+                ModelError::EntityAlreadyExists => return responses::conflict(msg),
+                _ => return responses::internal(),
+            };
         }
     };
 
     let user = user
         .into_active_model()
-        .set_email_verification_sent(&ctx.db)
+        .set_email_verification_token(&ctx.db)
         .await?;
 
     AuthMailer::send_welcome(&ctx, &user).await?;
@@ -131,7 +128,7 @@ async fn login(
 ) -> Result<Response> {
     let settings = &Settings::from_opt_json(&ctx.config.settings)?;
 
-    let user = users::Model::find_by_email(&ctx.db, &params.email).await?;
+    let (user, role) = users::Model::find_by_email_with_role(&ctx.db, &params.email).await?;
 
     if !user.verify_password(&params.password) {
         return unauthorized("unauthorized!");
@@ -165,13 +162,13 @@ async fn login(
 
     cookies.add(cookie);
 
-    format::json(LoginResponse::new(&user))
+    format::json(LoginResponse::new(&user, &role))
 }
 
 #[debug_handler]
 async fn current(auth: auth::JWT, State(ctx): State<AppContext>) -> Result<Response> {
-    let user = users::Model::find_by_pid(&ctx.db, &auth.claims.pid).await?;
-    format::json(CurrentResponse::new(&user))
+    let (user, role) = users::Model::find_by_pid_with_role(&ctx.db, &auth.claims.pid).await?;
+    format::json(CurrentResponse::new(&user, &role))
 }
 
 #[debug_handler]
@@ -245,7 +242,7 @@ async fn logout(
 
     cookies.remove(cookie);
 
-    format::empty_json()
+    format::empty()
 }
 
 #[debug_handler]
@@ -257,6 +254,7 @@ async fn delete(auth: auth::JWT, State(ctx): State<AppContext>) -> Result<Respon
 
     format::empty()
 }
+
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("/api/auth")
