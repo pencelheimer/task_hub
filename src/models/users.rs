@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{offset::Local, Duration};
 use loco_rs::{auth::jwt, hash, prelude::*};
-use sea_orm::{QuerySelect, QueryTrait};
+use sea_orm::QuerySelect;
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use uuid::Uuid;
