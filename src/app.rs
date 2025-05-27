@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::Router;
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
     bgworker::{BackgroundWorker, Queue},
@@ -12,6 +13,7 @@ use loco_rs::{
 };
 use migration::Migrator;
 use std::path::Path;
+use tower_cookies::CookieManagerLayer;
 
 use crate::models::roles;
 #[allow(unused_imports)]
@@ -50,6 +52,12 @@ impl Hooks for App {
         AppRoutes::with_default_routes() // controller routes below
             .add_route(controllers::auth::routes())
     }
+
+    async fn after_routes(router: Router, _ctx: &AppContext) -> Result<Router> {
+        let router = router.layer(CookieManagerLayer::new());
+        Ok(router)
+    }
+
     async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {
         queue.register(DownloadWorker::build(ctx)).await?;
         Ok(())

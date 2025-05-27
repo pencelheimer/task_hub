@@ -1,5 +1,5 @@
 use crate::{
-    common::{self, responses, settings::Settings},
+    common::{responses, settings::Settings},
     mailers::auth::AuthMailer,
     models::{
         _entities::users,
@@ -9,7 +9,7 @@ use crate::{
 };
 use axum::{debug_handler, http::status::StatusCode};
 use loco_rs::{controller::ErrorDetail, prelude::*, Error::CustomError};
-use tower_cookies::{cookie::SameSite, Cookie, CookieManagerLayer, Cookies};
+use tower_cookies::{cookie::SameSite, Cookie, Cookies};
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -268,5 +268,4 @@ pub fn routes() -> Routes {
         .add("/magic-link/{token}", get(magic_link_verify))
         .add("/logout", post(logout))
         .add("/delete", post(delete))
-        .layer(CookieManagerLayer::new())
 }
