@@ -16,6 +16,17 @@ pub fn conflict<T: Into<String>, U>(msg: T) -> Result<U> {
     ))
 }
 
+pub fn notfound<T: Into<String>, U>(msg: T) -> Result<U> {
+    Err(Error::CustomError(
+        StatusCode::NOT_FOUND,
+        ErrorDetail {
+            error: Some("Not Found".to_string()),
+            description: Some(msg.into()),
+            errors: None,
+        },
+    ))
+}
+
 pub fn internal<U>() -> Result<U> {
     Err(Error::InternalServerError)
 }

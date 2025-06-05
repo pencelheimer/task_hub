@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::Router;
+use loco_openapi::prelude::*;
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
     bgworker::{BackgroundWorker, Queue},
@@ -13,6 +13,7 @@ use loco_rs::{
 };
 use migration::Migrator;
 use std::path::Path;
+
 use tower_cookies::CookieManagerLayer;
 
 use crate::models::roles;
@@ -45,7 +46,25 @@ impl Hooks for App {
     }
 
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
-        Ok(vec![])
+        Ok(vec![Box::new(
+            loco_openapi::OpenapiInitializerWithSetup::new(
+                |ctx| {
+                    #[derive(OpenApi)]
+                    #[openapi(
+                        modifiers(&SecurityAddon),
+                        info(
+                            title = "TaskHub",
+                            description = "The best Task Managment Solution EVER"
+                        )
+                    )]
+                    struct ApiDoc;
+                    set_jwt_location(ctx.into());
+
+                    ApiDoc::openapi()
+                },
+                None,
+            ),
+        )])
     }
 
     fn routes(_ctx: &AppContext) -> AppRoutes {
@@ -54,8 +73,9 @@ impl Hooks for App {
             .add_route(controllers::auth::routes())
     }
 
-    async fn after_routes(router: Router, _ctx: &AppContext) -> Result<Router> {
+    async fn after_routes(router: axum::Router, _ctx: &AppContext) -> Result<axum::Router> {
         let router = router.layer(CookieManagerLayer::new());
+
         Ok(router)
     }
 

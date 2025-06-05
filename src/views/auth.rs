@@ -1,8 +1,9 @@
+use loco_openapi::prelude::ToSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{_entities::users, roles};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct LoginResponse {
     pub pid: String,
     pub name: String,
@@ -22,14 +23,7 @@ impl LoginResponse {
     }
 }
 
-// impl DeleteAllResponse {
-//     #[must_use]
-//     pub fn new(deleted: u64) -> Self {
-//         Self { deleted }
-//     }
-// }
-
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CurrentResponse {
     pub pid: String,
     pub name: String,

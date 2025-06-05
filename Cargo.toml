@@ -9,7 +9,7 @@ default-run = "task_hub-cli"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.dependencies]
-loco-rs = { version = "0.15" }
+loco-rs = { git = "https://github.com/loco-rs/loco" }
 
 [dependencies]
 loco-rs = { workspace = true }
@@ -35,8 +35,13 @@ validator = { version = "0.20" }
 time = "0.3.41"
 uuid = { version = "1.6.0", features = ["v4"] }
 include_dir = { version = "0.7" }
+
 tower-cookies = "0.11.0"
 dotenvy = "0.15.7"
+loco-openapi = { git = "https://github.com/loco-rs/loco-openapi-Initializer", branch = "main", features = [
+  "full",
+] }
+utoipa = { version = "5.3.1", features = ["chrono"] }
 
 [[bin]]
 name = "task_hub-cli"

@@ -1,13 +1,13 @@
 use axum::extract::FromRef;
 use axum::{extract::FromRequestParts, http::request::Parts};
 
-use loco_rs::controller;
+use loco_rs::controller::extractor::auth;
 use loco_rs::{app::AppContext, errors::Error, prelude::*};
 
 use crate::models;
 
 pub struct AdminUser {
-    pub jwt: controller::middleware::auth::JWT,
+    pub jwt: auth::JWT,
     pub user: models::users::Model,
     pub role: models::roles::Model,
 }
@@ -20,7 +20,7 @@ where
     type Rejection = Error;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let jwt = controller::middleware::auth::JWT::from_request_parts(parts, state).await?;
+        let jwt = auth::JWT::from_request_parts(parts, state).await?;
         let ctx = match State::<AppContext>::from_request_parts(parts, state).await {
             Ok(state) => state,
             Err(err) => {

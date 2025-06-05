@@ -43,7 +43,15 @@ mailer:
       password: {{ get_env(name="SMTP_PASSWORD", default="no_password") }}
 
 # Initializers Configuration
-# initializers:
+initializers:
+  openapi:
+    redoc:
+      url: /redoc
+    scalar:
+      url: /scalar
+    swagger:
+      url: /swagger
+      spec_json_url: /api-docs/openapi.json # spec_json_url is required for swagger-ui
 #  oauth2:
 #    authorization_code: # Authorization code grant type
 #      - client_identifier: google # Identifier for the OAuth2 provider. Replace 'google' with your provider's name if different, must be unique within the oauth2 config.

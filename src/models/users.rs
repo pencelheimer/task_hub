@@ -4,6 +4,7 @@ use loco_rs::{auth::jwt, hash, prelude::*};
 use sea_orm::QuerySelect;
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 pub use super::_entities::{
@@ -14,13 +15,13 @@ pub use super::_entities::{
 pub const MAGIC_LINK_LENGTH: i8 = 32;
 pub const MAGIC_LINK_EXPIRATION_MIN: i8 = 5;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct LoginParams {
     pub email: String,
     pub password: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct RegisterParams {
     pub email: String,
     pub password: String,
@@ -31,7 +32,6 @@ pub struct RegisterParams {
 pub struct Validator {
     #[validate(length(min = 2, message = "Name must be at least 2 characters long."))]
     pub name: String,
-    #[validate(custom(function = "validation::is_valid_email"))]
     pub email: String,
 }
 
