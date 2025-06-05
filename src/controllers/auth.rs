@@ -36,6 +36,11 @@ pub struct MagicLinkParams {
     pub email: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct ResendVerificationParams {
+    pub email: String,
+}
+
 /// Register user
 ///
 /// Register function creates a new user with the given parameters and sends a
@@ -45,7 +50,7 @@ pub struct MagicLinkParams {
     path = "/api/auth/register",
     tag = "auth",
     responses(
-        (status = 303, description = "User is registered"),
+        (status = 200, description = "User is registered"),
         (status = 409, description = "User with given email already exist"),
         (status = 500, description = "Internal server error")
     ),
@@ -76,6 +81,44 @@ async fn register(
             };
         }
     };
+
+    let user = user
+        .into_active_model()
+        .set_email_verification_token(&ctx.db)
+        .await?;
+
+    AuthMailer::send_welcome(&ctx, &user).await?;
+
+    format::empty()
+}
+
+/// Resend verification email
+///
+/// Resends welcome email to the user
+#[utoipa::path(
+    post,
+    path = "/api/auth/resend-verification-mail",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Verification email is sent"),
+        (status = 404, description = "User with given email is not registered"),
+        (status = 409, description = "User already verified"),
+        (status = 500, description = "Internal server error")
+    ),
+    request_body = RegisterParams
+)]
+#[debug_handler]
+async fn resend_verification_email(
+    State(ctx): State<AppContext>,
+    Json(params): Json<ResendVerificationParams>,
+) -> Result<Response> {
+    let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
+        return responses::notfound("User not found for resend verification");
+    };
+
+    if user.email_verified_at.is_some() {
+        return responses::conflict("User already verified");
+    }
 
     let user = user
         .into_active_model()
@@ -367,6 +410,13 @@ pub fn routes() -> Routes {
         .add("/login", openapi(post(login), routes!(login)))
         .add("/forgot", openapi(post(forgot), routes!(forgot)))
         .add("/reset", openapi(post(reset), routes!(reset)))
+        .add(
+            "/resend-verification-mail",
+            openapi(
+                post(resend_verification_email),
+                routes!(resend_verification_email),
+            ),
+        )
         .add("/current", openapi(get(current), routes!(current)))
         .add("/magic-link", post(magic_link))
         .add("/magic-link/{token}", get(magic_link_verify))

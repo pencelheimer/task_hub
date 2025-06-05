@@ -3,6 +3,7 @@
 pub mod prelude;
 
 pub mod accesses;
+pub mod o_auth2_sessions;
 pub mod roles;
 pub mod sea_orm_active_enums;
 pub mod tasks;

@@ -10,6 +10,7 @@ default-run = "task_hub-cli"
 
 [workspace.dependencies]
 loco-rs = { git = "https://github.com/loco-rs/loco" }
+loco-oauth2 = { path = "../loco-oauth2" }
 
 [dependencies]
 loco-rs = { workspace = true }
@@ -42,6 +43,9 @@ loco-openapi = { git = "https://github.com/loco-rs/loco-openapi-Initializer", br
   "full",
 ] }
 utoipa = { version = "5.3.1", features = ["chrono"] }
+
+loco-oauth2 = { workspace = true }
+axum_session = { version = "0.16.0" }
 
 [[bin]]
 name = "task_hub-cli"

@@ -16,9 +16,9 @@ use std::path::Path;
 
 use tower_cookies::CookieManagerLayer;
 
-use crate::models::roles;
 #[allow(unused_imports)]
 use crate::{controllers, models::_entities::users, tasks, workers::downloader::DownloadWorker};
+use crate::{initializers, models::roles};
 
 pub struct App;
 #[async_trait]
@@ -46,8 +46,8 @@ impl Hooks for App {
     }
 
     async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
-        Ok(vec![Box::new(
-            loco_openapi::OpenapiInitializerWithSetup::new(
+        Ok(vec![
+            Box::new(loco_openapi::OpenapiInitializerWithSetup::new(
                 |ctx| {
                     #[derive(OpenApi)]
                     #[openapi(
@@ -63,8 +63,10 @@ impl Hooks for App {
                     ApiDoc::openapi()
                 },
                 None,
-            ),
-        )])
+            )),
+            Box::new(initializers::axum_session::AxumSessionInitializer),
+            Box::new(initializers::oauth2::OAuth2StoreInitializer),
+        ])
     }
 
     fn routes(_ctx: &AppContext) -> AppRoutes {
@@ -74,6 +76,7 @@ impl Hooks for App {
             .add_route(controllers::accesses::routes())
             .add_route(controllers::roles::routes())
             .add_route(controllers::auth::routes())
+            .add_route(controllers::oauth2::routes())
     }
 
     async fn after_routes(router: axum::Router, _ctx: &AppContext) -> Result<axum::Router> {
