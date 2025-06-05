@@ -7,6 +7,22 @@ use utoipa::ToSchema;
 #[derive(
     Debug, Copy, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, ToSchema,
 )]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "access_level_enum")]
+pub enum AccessLevelEnum {
+    #[sea_orm(string_value = "View")]
+    View,
+    #[sea_orm(string_value = "AddSolution")]
+    AddSolution,
+    #[sea_orm(string_value = "Edit")]
+    Edit,
+    #[sea_orm(string_value = "AddUser")]
+    AddUser,
+    #[sea_orm(string_value = "FullAccess")]
+    FullAccess,
+}
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize, ToSchema,
+)]
 #[sea_orm(
     rs_type = "String",
     db_type = "Enum",
