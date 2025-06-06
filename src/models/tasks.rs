@@ -7,8 +7,10 @@ pub use super::_entities::{
 };
 
 use loco_rs::prelude::*;
-use sea_orm::{entity::prelude::*, TransactionTrait};
+use migration::extension::postgres::PgExpr;
+use sea_orm::{entity::prelude::*, Condition, TransactionTrait};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 pub type Tasks = Entity;
 
 #[derive(Debug, Validate, Deserialize)]
@@ -39,17 +41,21 @@ impl ActiveModelBehavior for ActiveModel {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct CreateParams {
     pub name: String,
     pub visibility: Option<TaskVisibilityEnum>,
-    pub user_pid: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct UpdateParams {
     pub name: Option<String>,
     pub visibility: Option<TaskVisibilityEnum>,
+}
+
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
+pub struct SearchParams {
+    pub name: String,
 }
 
 // implement your read-oriented logic here
@@ -59,6 +65,33 @@ impl Model {
             .one(db)
             .await?
             .ok_or_else(|| ModelError::EntityNotFound)
+    }
+
+    pub async fn has_access(
+        db: &DatabaseConnection,
+        user_pid: &str,
+        task_id: i32,
+        levels: Vec<AccessLevelEnum>,
+    ) -> Result<()> {
+        let user = users::Model::find_by_pid(db, user_pid).await?;
+        let task = tasks::Model::load(db, task_id).await?;
+
+        let user_access = accesses::Entity::find()
+            .filter(accesses::Column::UserId.eq(user.id))
+            .filter(accesses::Column::TaskId.eq(task.id))
+            .one(db)
+            .await?;
+
+        let has_access = match user_access {
+            Some(access_level) => levels.contains(&access_level.accesslevel),
+            None => false,
+        };
+
+        if has_access {
+            Ok(())
+        } else {
+            unauthorized("unauthorized")
+        }
     }
 
     pub async fn list_public(db: &DatabaseConnection) -> ModelResult<Vec<Self>> {
@@ -74,6 +107,45 @@ impl Model {
         Ok(tasks)
     }
 
+    pub async fn search_for_user(
+        db: &DatabaseConnection,
+        asked_by: &str,
+        params: &SearchParams,
+    ) -> ModelResult<Vec<Self>> {
+        let user = users::Model::find_by_pid(db, asked_by).await?;
+
+        let query = tasks::Entity::find()
+            .inner_join(accesses::Entity)
+            .filter(Expr::col(tasks::Column::Name).ilike(format!("%{}%", params.name)))
+            .filter(
+                Condition::any()
+                    .add(accesses::Column::UserId.eq(user.id))
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid)),
+            );
+
+        let tasks = query.all(db).await?;
+
+        Ok(tasks)
+    }
+
+    pub async fn search_for_anon(
+        db: &DatabaseConnection,
+        params: &SearchParams,
+    ) -> ModelResult<Vec<Self>> {
+        let query = tasks::Entity::find()
+            .filter(Expr::col(tasks::Column::Name).ilike(format!("%{}%", params.name)))
+            .filter(
+                Condition::any()
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid)),
+            );
+
+        let tasks = query.all(db).await?;
+
+        Ok(tasks)
+    }
+
     pub async fn list_for_user(
         db: &DatabaseConnection,
         user_pid: &str,
@@ -81,15 +153,18 @@ impl Model {
     ) -> ModelResult<Vec<Self>> {
         let user = users::Model::find_by_pid(db, user_pid).await?;
 
-        let mut query = tasks::Entity::find()
-            .inner_join(accesses::Entity)
-            .filter(accesses::Column::UserId.eq(user.id))
-            .filter(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
-            .filter(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid));
+        let mut visibility = Condition::any()
+            .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
+            .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid));
 
         if user_pid == asked_by {
-            query = query.filter(tasks::Column::Visibility.eq(TaskVisibilityEnum::Private));
+            visibility = visibility.add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Private));
         }
+
+        let query = tasks::Entity::find()
+            .inner_join(accesses::Entity)
+            .filter(accesses::Column::UserId.eq(user.id))
+            .filter(visibility);
 
         let tasks = query.all(db).await?;
 
@@ -102,16 +177,23 @@ impl Model {
         let query = tasks::Entity::find()
             .inner_join(accesses::Entity)
             .filter(accesses::Column::UserId.eq(user.id))
-            .filter(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
-            .filter(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid));
+            .filter(
+                Condition::any()
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Public))
+                    .add(tasks::Column::Visibility.eq(TaskVisibilityEnum::Paid)),
+            );
 
         let tasks = query.all(db).await?;
 
         Ok(tasks)
     }
 
-    pub async fn add(db: &DatabaseConnection, params: CreateParams) -> ModelResult<Self> {
-        let user = users::Model::find_by_pid(db, params.user_pid.as_str()).await?;
+    pub async fn add(
+        db: &DatabaseConnection,
+        user_pid: &str,
+        params: CreateParams,
+    ) -> ModelResult<Self> {
+        let user = users::Model::find_by_pid(db, user_pid).await?;
 
         let txn = db.begin().await?;
 
@@ -140,36 +222,6 @@ impl Model {
 
 // implement your write-oriented logic here
 impl ActiveModel {
-    pub async fn has_access(
-        db: &DatabaseConnection,
-        user_pid: String,
-        task_id: i32,
-        levels: Vec<AccessLevelEnum>,
-    ) -> Result<()> {
-        let user = users::Model::find_by_pid(db, &user_pid).await?;
-        let task = tasks::Model::load(db, task_id).await?;
-
-        let user_access = accesses::Entity::find()
-            .filter(accesses::Column::UserId.eq(user.id))
-            .filter(accesses::Column::TaskId.eq(task.id))
-            .one(db)
-            .await?;
-
-        let has_access = match user_access {
-            Some(access_level) => levels.contains(&access_level.accesslevel),
-            None => false,
-        };
-
-        if !has_access {
-            unauthorized(format!(
-                "user with pid '{}' tried to update task with id {}",
-                user.pid, task.id
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
     pub async fn update(
         db: &DatabaseConnection,
         params: UpdateParams,

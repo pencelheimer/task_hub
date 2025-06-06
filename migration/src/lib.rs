@@ -8,6 +8,7 @@ mod m20250527_094045_roles;
 mod m20250527_094216_add_role_ref_to_users;
 mod m20250601_172250_tasks;
 mod m20250602_133444_accesses;
+mod m20250605_151704_attachments;
 pub struct Migrator;
 
 #[async_trait::async_trait]
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250527_094216_add_role_ref_to_users::Migration),
             Box::new(m20250601_172250_tasks::Migration),
             Box::new(m20250602_133444_accesses::Migration),
+            Box::new(m20250605_151704_attachments::Migration),
             // inject-above (do not remove this comment)
 
             // Register OAuth2 sessions migration
@@ -26,4 +28,3 @@ impl MigratorTrait for Migrator {
         ]
     }
 }
-

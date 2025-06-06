@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 pub use super::_entities::{
     roles::{self},
-    users::{self, ActiveModel, Model},
+    users::{self, ActiveModel, Entity, Model},
 };
 use super::o_auth2_sessions;
 use loco_oauth2::models::users::OAuth2UserTrait;
@@ -218,6 +218,30 @@ impl users::Model {
             .one(db)
             .await?;
         user.ok_or_else(|| ModelError::EntityNotFound)
+    }
+    ///
+    /// finds a user and their role by the provided id
+    ///
+    /// # Errors
+    ///
+    /// When could not find user  or DB query error
+    pub async fn find_by_id_with_role(
+        db: &DatabaseConnection,
+        id: i32,
+    ) -> ModelResult<(Self, roles::Model)> {
+        let (user, role) = users::Entity::find()
+            .find_also_related(roles::Entity)
+            .filter(model::query::condition().eq(users::Column::Id, id).build())
+            .one(db)
+            .await?
+            .ok_or_else(|| ModelError::EntityNotFound)?;
+
+        let role = match role {
+            Some(role) => role,
+            None => return Err(ModelError::EntityNotFound),
+        };
+
+        Ok((user, role))
     }
 
     /// finds a user and their role by the provided pid
@@ -521,15 +545,32 @@ impl OAuth2UserTrait<OAuth2UserProfile> for Model {
             .await?
         {
             None => {
-                // We use the sub field as the user fake password since sub is unique
                 let password_hash =
                     hash::hash_password(&profile.sub).map_err(|e| ModelError::Any(e.into()))?;
-                // Create the user into the database
+
+                let Some(role_id) = roles::Entity::find()
+                    .filter(
+                        model::query::condition()
+                            .eq(roles::Column::Name, "User")
+                            .build(),
+                    )
+                    .select_only()
+                    .column(roles::Column::Id)
+                    .into_tuple()
+                    .one(&txn)
+                    .await?
+                else {
+                    return Err(ModelError::Message(String::from(
+                        "Default User role is not present in the DB",
+                    )));
+                };
+
                 users::ActiveModel {
                     email: ActiveValue::set(profile.email.to_string()),
                     name: ActiveValue::set(profile.name.to_string()),
                     email_verified_at: ActiveValue::set(Some(Local::now().into())),
                     password: ActiveValue::set(password_hash),
+                    role_id: ActiveValue::set(role_id),
                     ..Default::default()
                 }
                 .insert(&txn)

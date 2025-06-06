@@ -29,9 +29,9 @@ pub async fn list_accesses(
     Path(task_id): Path<i32>,
     State(ctx): State<AppContext>,
 ) -> Result<Response> {
-    tasks::ActiveModel::has_access(
+    tasks::Model::has_access(
         &ctx.db,
-        auth.claims.pid.clone(),
+        &auth.claims.pid,
         task_id,
         vec![
             tasks::AccessLevelEnum::FullAccess,
@@ -69,9 +69,9 @@ pub async fn grant_access(
     State(ctx): State<AppContext>,
     Json(params): Json<accesses::GrantParams>,
 ) -> Result<Response> {
-    tasks::ActiveModel::has_access(
+    tasks::Model::has_access(
         &ctx.db,
-        auth.claims.pid.clone(),
+        &auth.claims.pid,
         task_id,
         vec![
             tasks::AccessLevelEnum::FullAccess,
@@ -109,9 +109,9 @@ pub async fn update_access(
     State(ctx): State<AppContext>,
     Json(params): Json<accesses::UpdateParams>,
 ) -> Result<Response> {
-    tasks::ActiveModel::has_access(
+    tasks::Model::has_access(
         &ctx.db,
-        auth.claims.pid.clone(),
+        &auth.claims.pid,
         task_id,
         vec![
             tasks::AccessLevelEnum::FullAccess,
@@ -149,9 +149,9 @@ pub async fn deny_access(
     State(ctx): State<AppContext>,
     Json(params): Json<accesses::DenyParams>,
 ) -> Result<Response> {
-    tasks::ActiveModel::has_access(
+    tasks::Model::has_access(
         &ctx.db,
-        auth.claims.pid.clone(),
+        &auth.claims.pid,
         task_id,
         vec![
             tasks::AccessLevelEnum::FullAccess,

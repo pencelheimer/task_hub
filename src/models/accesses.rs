@@ -80,6 +80,20 @@ impl Model {
         access.ok_or_else(|| ModelError::EntityNotFound)
     }
 
+    pub async fn find_task_owner(
+        db: &DatabaseConnection,
+        task_id: i32,
+    ) -> ModelResult<users::Model> {
+        let owner = users::Entity::find()
+            .inner_join(accesses::Entity)
+            .filter(accesses::Column::TaskId.eq(task_id))
+            .filter(accesses::Column::Accesslevel.eq(AccessLevelEnum::FullAccess))
+            .one(db)
+            .await?;
+
+        owner.ok_or_else(|| ModelError::EntityNotFound)
+    }
+
     pub async fn list_for_task(db: &DatabaseConnection, task_id: i32) -> ModelResult<Vec<Self>> {
         let task = tasks::Model::load(db, task_id).await?;
 

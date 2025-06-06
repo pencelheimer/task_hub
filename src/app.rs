@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::extract::DefaultBodyLimit;
 use loco_openapi::prelude::*;
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
@@ -8,6 +9,7 @@ use loco_rs::{
     controller::AppRoutes,
     db::{self, truncate_table},
     environment::Environment,
+    storage,
     task::Tasks,
     Result,
 };
@@ -71,6 +73,7 @@ impl Hooks for App {
 
     fn routes(_ctx: &AppContext) -> AppRoutes {
         AppRoutes::with_default_routes() // controller routes below
+            .add_route(controllers::attachments::routes())
             .add_route(controllers::users::routes())
             .add_route(controllers::tasks::routes())
             .add_route(controllers::accesses::routes())
@@ -80,9 +83,18 @@ impl Hooks for App {
     }
 
     async fn after_routes(router: axum::Router, _ctx: &AppContext) -> Result<axum::Router> {
-        let router = router.layer(CookieManagerLayer::new());
+        let router = router
+            .layer(CookieManagerLayer::new())
+            .layer(DefaultBodyLimit::max(1024 * 1024 * 10));
 
         Ok(router)
+    }
+
+    async fn after_context(ctx: AppContext) -> Result<AppContext> {
+        Ok(AppContext {
+            storage: storage::Storage::single(storage::drivers::mem::new()).into(),
+            ..ctx
+        })
     }
 
     async fn connect_workers(ctx: &AppContext, queue: &Queue) -> Result<()> {

@@ -1,4 +1,4 @@
-use axum::extract::FromRef;
+use axum::extract::{FromRef, OptionalFromRequestParts};
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 use loco_rs::controller::extractor::auth;
@@ -37,5 +37,27 @@ where
         }
 
         Ok(Self { jwt, user, role })
+    }
+}
+
+pub struct OptJWT {
+    pub jwt: auth::JWT,
+}
+
+impl<S> OptionalFromRequestParts<S> for OptJWT
+where
+    AppContext: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> Result<Option<Self>, Self::Rejection> {
+        match auth::JWT::from_request_parts(parts, state).await {
+            Ok(jwt) => Ok(Some(Self { jwt })),
+            Err(_) => Ok(None),
+        }
     }
 }

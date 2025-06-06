@@ -8,9 +8,9 @@ use crate::{
     views::auth::{CurrentResponse, LoginResponse},
 };
 
-use axum::{debug_handler, http::status::StatusCode};
+use axum::debug_handler;
 use loco_openapi::prelude::*;
-use loco_rs::{controller::ErrorDetail, prelude::*, Error::CustomError};
+use loco_rs::prelude::*;
 use tower_cookies::{cookie::SameSite, Cookie, Cookies};
 
 use regex::Regex;
@@ -236,21 +236,24 @@ async fn login(
 ) -> Result<Response> {
     let settings = &Settings::from_opt_json(&ctx.config.settings)?;
 
-    let (user, role) = users::Model::find_by_email_with_role(&ctx.db, &params.email).await?;
+    let (user, role) = match users::Model::find_by_email_with_role(&ctx.db, &params.email).await {
+        Ok((user, role)) => (user, role),
+        Err(err) => {
+            return match err {
+                ModelError::EntityNotFound => {
+                    responses::notfound("User with given email is not found")
+                }
+                _ => responses::internal(),
+            }
+        }
+    };
 
     if !user.verify_password(&params.password) {
-        return unauthorized("unauthorized!");
+        return responses::unauthorized("Password is incorrect!");
     }
 
     if user.email_verified_at.is_none() {
-        return Err(CustomError(
-            StatusCode::FORBIDDEN,
-            ErrorDetail {
-                error: Some("email_not_verified".to_string()),
-                description: Some("User email is not verified".to_string()),
-                errors: None,
-            },
-        ));
+        return responses::forbidden("User email is not verified");
     }
 
     let jwt_secret = ctx.config.get_jwt_config()?;
